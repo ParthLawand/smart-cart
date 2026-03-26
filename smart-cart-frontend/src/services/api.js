@@ -1,68 +1,135 @@
-/**
- * Mock API Service for Smart Cart System
- * Simulates backend delay and random live detection events
- */
+import axios from 'axios';
 
-const PRODUCTS = [
-    { id: 1, name: "Fresh Milk", price: 45, image: "https://images.unsplash.com/photo-1563636619-e9143da7973b?auto=format&fit=crop&w=300&q=80" },
-    { id: 2, name: "Whole Wheat Bread", price: 40, image: "https://images.unsplash.com/photo-1598373182133-52452f7691ef?auto=format&fit=crop&w=300&q=80" },
-    { id: 3, name: "Red Apple", price: 25, image: "https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?auto=format&fit=crop&w=300&q=80" },
-    { id: 4, name: "Bananas (1kg)", price: 60, image: "https://images.unsplash.com/photo-1603833665858-e61d17a86279?auto=format&fit=crop&w=300&q=80" },
-    { id: 5, name: "Orange Juice", price: 120, image: "https://images.unsplash.com/photo-1600271886742-f049cd451bba?auto=format&fit=crop&w=300&q=80" },
-    { id: 6, name: "Potato Chips", price: 30, image: "https://images.unsplash.com/photo-1566478989037-eec170784d0b?auto=format&fit=crop&w=300&q=80" },
-];
+const axiosInstance = axios.create({
+    baseURL: 'http://localhost:5000/api'
+});
 
-// Simulating database
-let cart = [];
+// Attach JWT token to every request
+axiosInstance.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Handle 401 responses (expired/invalid token)
+axiosInstance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('cartId');
+            localStorage.removeItem('userPhone');
+            window.location.href = '/';
+        }
+        return Promise.reject(error);
+    }
+);
 
+export default axiosInstance;
+
+// -------- CART ID MANAGEMENT --------
+const getCartId = () => localStorage.getItem('cartId');
+
+// -------- REAL API --------
 export const api = {
-    // Get current cart
+
+    // -------- AUTH --------
+    register: async (phone, password, name) => {
+        const { data } = await axiosInstance.post('/auth/register', { phone, password, name });
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('userPhone', data.user.phone);
+        return data;
+    },
+
+    login: async (phone, password) => {
+        const { data } = await axiosInstance.post('/auth/login', { phone, password });
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('userPhone', data.user.phone);
+        return data;
+    },
+
+    logout: () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('cartId');
+        localStorage.removeItem('userPhone');
+    },
+
+    isLoggedIn: () => {
+        return !!localStorage.getItem('token');
+    },
+
+    // -------- CART --------
     getCart: async () => {
-        await delay(500);
-        return [...cart];
+        try {
+            const cartId = getCartId();
+            if (!cartId) return [];
+            const { data } = await axiosInstance.get(`/cart/${cartId}`);
+            if (!data || !data.items) return [];
+            return data.items.map(item => ({
+                ...item,
+                id: item.product_id,
+            }));
+        } catch (error) {
+            console.error("Failed to fetch cart", error);
+            return [];
+        }
     },
 
-    // Add item to cart
     addItem: async (productId) => {
-        await delay(300);
-        const product = PRODUCTS.find((p) => p.id === productId);
-        if (!product) throw new Error("Product not found");
-
-        const existingItem = cart.find((item) => item.id === productId);
-        if (existingItem) {
-            existingItem.quantity += 1;
-        } else {
-            cart.push({ ...product, quantity: 1 });
-        }
-        return [...cart];
+        const cartId = getCartId();
+        const { data } = await axiosInstance.post(`/cart/${cartId}/detection-event`, {
+            event: "ADD",
+            product_id: String(productId),
+            confidence: 0.95
+        });
+        const cart = data.cart || data;
+        if (!cart || !cart.items) return [];
+        return cart.items.map(item => ({
+            ...item,
+            id: item.product_id,
+        }));
     },
 
-    // Remove item from cart
     removeItem: async (productId) => {
-        await delay(300);
-        const index = cart.findIndex((item) => item.id === productId);
-        if (index > -1) {
-            if (cart[index].quantity > 1) {
-                cart[index].quantity -= 1;
-            } else {
-                cart.splice(index, 1);
-            }
-        }
-        return [...cart];
+        const cartId = getCartId();
+        const { data } = await axiosInstance.post(`/cart/${cartId}/detection-event`, {
+            event: "REMOVE",
+            product_id: String(productId),
+            confidence: 0.95
+        });
+        const cart = data.cart || data;
+        if (!cart || !cart.items) return [];
+        return cart.items.map(item => ({
+            ...item,
+            id: item.product_id,
+        }));
     },
 
-    // Clear cart (Checkout)
     checkout: async () => {
-        await delay(1000);
-        cart = [];
+        const cartId = getCartId();
+        await axiosInstance.post(`/cart/${cartId}/checkout`);
+        localStorage.removeItem('cartId');
         return { success: true, message: "Checkout successful" };
     },
 
-    // Get all available products (for demo/admin)
-    getProducts: async () => {
-        await delay(200);
-        return PRODUCTS;
+    createCart: async () => {
+        const { data } = await axiosInstance.post('/cart');
+        const cartId = data._id;
+        if (cartId) localStorage.setItem('cartId', cartId);
+        return data;
+    },
+
+    // -------- SCAN --------
+    startScan: async () => {
+        const cartId = getCartId();
+        const { data } = await axiosInstance.post('/scan/start', { cartId });
+        return data;
+    },
+
+    stopScan: async () => {
+        const { data } = await axiosInstance.post('/scan/stop');
+        return data;
     },
 };

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useCart } from '../context/CartContext';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, CreditCard, Wallet, Smartphone, ArrowLeft } from 'lucide-react';
+import { CheckCircle, CreditCard, Wallet, Smartphone, ArrowLeft, MessageCircle } from 'lucide-react';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import VirtualPhone from '../components/simulation/VirtualPhone';
@@ -24,6 +24,41 @@ const CheckoutPage = () => {
     const taxAmount = Math.round(totalAmount * taxRate);
     const finalAmount = totalAmount + taxAmount;
 
+    // Store items before checkout clears them
+    const billItemsRef = useRef([]);
+    const billTotalRef = useRef(0);
+
+    const generateBillText = (items, total) => {
+        const date = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+        let bill = `🛒 *SMART CART - RECEIPT*\n`;
+        bill += `━━━━━━━━━━━━━━━━━━━━\n`;
+        bill += `📅 Date: ${date}\n`;
+        bill += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+        bill += `*ITEMS:*\n`;
+        items.forEach((item, i) => {
+            bill += `${i + 1}. ${item.name}\n`;
+            bill += `   Qty: ${item.quantity} × ₹${item.price} = ₹${item.quantity * item.price}\n`;
+        });
+        const tax = Math.round(total * 0.05);
+        const grandTotal = total + tax;
+        bill += `\n━━━━━━━━━━━━━━━━━━━━\n`;
+        bill += `Subtotal: ₹${total}\n`;
+        bill += `GST (5%): ₹${tax}\n`;
+        bill += `*TOTAL: ₹${grandTotal}*\n`;
+        bill += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+        bill += `✅ Payment: PAID\n`;
+        bill += `Thank you for shopping with Smart Cart! 🙏`;
+        return bill;
+    };
+
+    const sendBillToWhatsApp = (items, total) => {
+        const userPhone = localStorage.getItem('userPhone') || '';
+        const billText = generateBillText(items, total);
+        const encodedBill = encodeURIComponent(billText);
+        const waUrl = `https://wa.me/91${userPhone}?text=${encodedBill}`;
+        window.open(waUrl, '_blank');
+    };
+
     const handlePayment = async () => {
         if (paymentMethod === 'whatsapp') {
             if (phoneNumber.length < 10) {
@@ -34,11 +69,18 @@ const CheckoutPage = () => {
             return;
         }
 
+        // Save bill data before clearing cart
+        billItemsRef.current = [...cartItems];
+        billTotalRef.current = totalAmount;
+
         setIsProcessing(true);
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate API call
+        await new Promise(resolve => setTimeout(resolve, 2000));
         await clearCart();
         setIsProcessing(false);
         setIsSuccess(true);
+
+        // Auto-open WhatsApp with bill
+        sendBillToWhatsApp(billItemsRef.current, billTotalRef.current);
     };
 
     const startWhatsAppFlow = async () => {
@@ -107,7 +149,15 @@ const CheckoutPage = () => {
                         <CheckCircle className="w-12 h-12 text-green-600" />
                     </div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight">Payment Successful!</h1>
-                    <p className="text-gray-500 mb-8 font-medium">Thank you for shopping with Smart Cart.<br /> Your receipt has been sent to WhatsApp.</p>
+                    <p className="text-gray-500 mb-4 font-medium">Thank you for shopping with Smart Cart.</p>
+
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
+                        <MessageCircle className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+                        <p className="text-sm text-emerald-700 text-left font-medium">
+                            Your bill receipt has been sent to your registered phone number via SMS.
+                        </p>
+                    </div>
+
                     <Button onClick={() => navigate('/')} size="lg" className="w-full shadow-emerald-200">
                         Back to Home
                     </Button>
